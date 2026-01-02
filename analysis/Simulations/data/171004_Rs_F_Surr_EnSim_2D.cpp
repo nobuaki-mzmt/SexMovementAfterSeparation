@@ -1,0 +1,261 @@
+﻿// Separation Search
+
+// Encounter sim for Brownian walk with various pauses
+// 170924 N Mizumoto created
+
+// summary
+// 2D condition without boundary (NBC)
+// a male and a female search for each other
+// real female vs surrogate female
+
+// 1 step = 0.2 sec
+// CRW (resample every 0.2 sec)
+// pause/move cut in 0.2*n sec
+
+// libraries
+#include "stdafx.h"
+#include <iostream>	// cout; cin
+#include <sstream>	// to_string
+#include <fstream>	// writing
+using namespace std;
+#include "MovementSimulation.hpp"
+
+///*// opencv
+#include <opencv2/core/core.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
+#include <opencv2/highgui/highgui.hpp>
+using namespace cv;
+//*/
+
+//// parameters ////
+
+// space
+double LocX[2], LocY[2], Angle[2];
+
+int Pnokori[2];
+int Wnokori[2];
+
+vector<int> PP(2);
+
+// result
+std::string FileName;
+
+int steps, nsteps;
+int detection;
+int iter, OK;
+int i, j, simtime, endtime;
+double xdis, ydis, sepdis, sep_dis;
+
+// functions
+
+double Rn;
+// 0.2, 0.4, 0.6, 0.8
+// 0.9315589354 0.0621039290 0.0057034221 0.0006337136
+double SurMove() {
+	Rn = rnd();
+	if (Rn < 0.9315589354) {
+		return(1);
+	}
+	else if (Rn < 0.9315589354 + 0.0621039290) {
+		return(2);
+	}
+	else if (Rn < 0.9315589354 + 0.0621039290 + 0.0057034221) {
+		return(3);
+	}
+	else {
+		return(4);
+	}
+}
+
+
+// initialization (1:exp_data, 2:sur_data, 3:BW)
+int initial(int id, int pattern) {
+	Rn = rnd();
+	switch (pattern) {
+	case 1:
+		if (Rn <= 0.5) { Pnokori[id] = rbeki(1.739645); Wnokori[id] = 0; }
+		else { Pnokori[id] = 0; Wnokori[id] = rbeki(2.19908); }
+		break;
+	case 2:
+		if (Rn <= 0.5) { Pnokori[id] = rexp(0.5998498); Wnokori[id] = 0; }
+		else { Pnokori[id] = 0; Wnokori[id] = SurMove(); }
+		break;
+	case 0:
+	case 3:
+		break;
+	}
+	return(0);
+}
+
+// change position (1:exp_data, 2:sur_data, 3:CRW(After male))
+int change_position(int &j, int pattern) {
+	if (pattern == 1 || pattern == 2) {
+		if (Pnokori[j] > 0) {
+			Pnokori[j] -= 1;
+			if (Pnokori[j] <= 0) {
+				if (pattern == 1) {
+					Wnokori[j] = rbeki(2.19908);
+				}
+				else {
+					Wnokori[j] = SurMove();
+				}
+				Pnokori[j] = 0;
+			}
+		}
+		else {
+			Angle[j] += WrappedCauchy(0.7576250);
+			LocX[j] += cos(Angle[j]) * 0.2 * 10.52885;
+			LocY[j] += sin(Angle[j]) * 0.2 * 10.52885;
+			Wnokori[j] -= 1;
+			if (Wnokori[j] <= 0) {
+				if (pattern == 1) {
+					Pnokori[j] = rbeki(1.739645);
+				}
+				else {
+					Pnokori[j] = rexp(0.5998498);
+				}
+				Wnokori[j] = 0;
+			}
+		}
+	}
+	else if (pattern == 3) {
+		Angle[j] += WrappedCauchy(0.7939391);
+		LocX[j] += cos(Angle[j]) * 0.2 * 15.48564;
+		LocY[j] += sin(Angle[j]) * 0.2 * 15.48564;
+	}
+	else if (pattern == 0) {
+		Angle[j] += WrappedCauchy(0.7576250);
+		LocX[j] += cos(Angle[j]) * 0.2 * 10.52885;
+		LocY[j] += sin(Angle[j]) * 0.2 * 10.52885;
+	}
+	return(0);
+}
+
+
+// SepSearch (1:exp_data, 2:sur_data, 3:CRW(After male))
+double Bwalk(vector<int>& PP, int& iter, int& nsteps, vector<int>& res) {
+	for (i = 0; i<iter; i++) {
+		printf("female:%d, male:%d, rep:%d        \r", PP[0], PP[1], i + 1);
+		// initialization
+		LocX[0] = 0;
+		LocY[0] = 0;
+		Angle[0] = allocate();
+
+		LocX[1] = sep_dis;
+		LocY[1] = 0;
+		Angle[1] = allocate();
+
+		// begins from pause or walk randomly
+		for (j = 0; j<2; j++) {
+			initial(j, PP[j]);
+		}
+		endtime = nsteps;
+		for (simtime = 0; simtime < nsteps + 1; simtime++) {
+			// change in position
+			for (j = 0; j<2; j++) {
+				change_position(j, PP[j]);
+			}
+			// encounter determination
+			xdis = LocX[1] - LocX[0];
+			ydis = LocY[1] - LocY[0];
+			sepdis = sqrt(xdis*xdis + ydis*ydis);
+			if (sepdis <= detection) {
+				endtime = simtime + 1;
+				break;
+			}
+			else if (sepdis > (nsteps - simtime) / 2) {
+				break;
+			}
+			/*///*
+			cv::Mat Img(cv::Size(500, 500), CV_8UC3, cv::Scalar(255, 255, 255));
+			cv::namedWindow("search image", cv::WINDOW_AUTOSIZE);
+			cv::circle(Img, cv::Point(LocX[0] + (500 / 2), LocY[0] + (500 / 2)), 7, cv::Scalar(200, 0, 0), -1, CV_AA);
+			cv::circle(Img, cv::Point(LocX[1] + (500 / 2), LocY[1] + (500 / 2)), 7, cv::Scalar(0, 0, 200), -1, CV_AA);
+			cv::imshow("search image", Img);
+			cv::waitKey(1);
+			*///*/
+		}
+
+		for (j = endtime; j<nsteps; j++) {
+			res[j] ++;
+		}
+	}
+	return(0);
+}
+
+// main function
+int main() {
+
+	cout << "Encounter simulation for Female (exp-surr) with Brownian Walers" << endl;
+
+	cout << "Analysisng steps" << endl;
+	cout << "1 step = 0.2 sec" << endl;
+	cout << "180 sec = 900 steps" << endl;
+	steps = 900;
+
+	cout << "Detection = 7 mm" << endl;
+	detection = 7;
+
+	cout << "Enter the num of rep (enter number)" << endl;
+	cin >> iter;
+
+	sep_dis = 16.767;
+	cout << "The separation distance (NBC)" << endl;
+	cout << "Default: 16.767 mm, OK?" << endl;
+	cin >> OK;
+	if (OK != 1) {
+		cout << "Enter the separation distance (mm)" << endl;
+		cin >> sep_dis;
+	}
+
+	cout << "Are you OK?" << endl;
+	cout << "Yes: 1, No: 2" << endl;
+	cin >> OK;
+	if (OK == 2) { return(2); }
+
+	// output data
+	nsteps = steps;
+	vector<int> res(nsteps);
+
+	FileName = "EnSim_F-Surr";
+	FileName += "_rep";
+	FileName += std::to_string(iter);
+	FileName += "_SepSearch_SepDis";
+	FileName += std::to_string(int(sep_dis));
+	FileName += ".csv";
+	std::ofstream ofs(FileName);
+
+	ofs << "Female,Male";
+	for (i = 0; i < nsteps; i++) {
+		ofs << "," << i + 1;
+	}
+	ofs << endl;
+
+	PP[1] = 3;
+	for (PP[0] = 0; PP[0] < 3; PP[0]++) {
+		fill(res.begin(), res.end(), 0);
+		Bwalk(PP, iter, nsteps, res);
+		cout << endl;
+		for (j = 0; j<2; j++) {
+			switch (PP[j]) {
+			case 0:
+				ofs << "WO_stop" << ",";
+				break;
+			case 1:
+				ofs << "Exp_data" << ",";
+				break;
+			case 2:
+				ofs << "Sur_data" << ",";
+				break;
+			case 3:
+				ofs << "CRW_MA" << ",";
+				break;
+			}
+		}
+		for (i = 0; i < nsteps - 1; i++) {
+			ofs << res[i] << ",";
+		}
+		ofs << res[nsteps - 1] << endl;
+	}
+}
+
